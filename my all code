@@ -1,0 +1,826 @@
+aws_subnet_id: subnet-5f1d5739
+aws_access_key_id: ASIAXYZ7U26BVNAPPIGO
+aws_secret_access_key: PfmQZvGFctNdG21aDEwG7txBcKrDr+8QSKJnd93J
+aws_session_token: FwoGZXIvYXdzEJ3//////////wEaDPJy4h+gaPBMOKsuuCLJAYAwo7D+crFCMj53aKPiCF191ZSYQI7LAE67+My11BRUPDs4CLNUIefu4sF+Sfu8EA2TecxVpc6Tz+0/UBTxlMlOfe2tLHYG6ayZjica4DVtqiTdqDJZ7JzfG0/l/lM0pZ4eu4nGVjhITcDW8yl0p7xhRFPCl8heGDOFGVk6Y9oLKWGAsWwIL63p3wqmyJbpEHydRkotgXv49SqipwLq6QHT8FoeByft3MZavfgpiWrGhqkFg2322soFCYgxWdRe5WRGXwL4aYx5dSicx5uHBjItmUrWO9sczQbD2I3kklmmyUkJW5lfFQWGq3z1P8SsOOxVxkFXKI6ManH4S+34
+ips:
+  - id: "{{ ec2.instances[0].id }}"
+    ip: 3.208.91.39
+  - id: "{{ ec2.instances[1].id }}"
+    ip: 54.162.195.194
+#  - id: "{{ ec2.instances[2].id }}"
+#    ip: 54.158.64.205
+#  - id: "{{ ec2.instances[3].id }}"
+#    ip: 3.90.193.85
+#  - id: "{{ ec2.instances[4].id }}"
+#    ip: 3.231.64.114
+[root@node2 kubernetes]# cat ec2.yaml
+---
+ - hosts: localhost
+   vars_files:
+     - cred.yml
+   tasks:
+     - name: creating security group
+       ec2_group:
+           name: kube
+           description: Security grp for web server
+           region: us-east-1
+           aws_access_key: "{{ aws_access_key_id }}"
+           aws_secret_key: "{{ aws_secret_access_key }}"
+           security_token: "{{ aws_session_token }}"
+           rules:
+              - proto: tcp
+                from_port: 22
+                to_port: 22
+                cidr_ip: 0.0.0.0/0
+#             - proto: tcp
+#                from_port: 80
+#                to_port: 80
+#                cidr_ip: 0.0.0.0/0
+#              - proto: tcp
+#                from_port: 8080
+#                to_port: 80
+#                cidr_ip: 0.0.0.0/0
+              - proto: tcp
+                from_port: 0
+                to_port: 65535
+                cidr_ip: 0.0.0.0/0
+              - proto: udp
+                from_port: 0
+                to_port: 65535
+                cidr_ip: 0.0.0.0/0
+           rules_egress:
+              - proto: all
+                cidr_ip: 0.0.0.0/0
+     - name: launching ec2 instance for webserver
+       ec2:
+          instance_type: t2.medium
+          key_name: kube
+          image: ami-0742b4e673072066f
+          region: us-east-1
+          group: kube
+          count: 1
+          wait: yes
+          vpc_subnet_id: "{{ aws_subnet_id }}"
+          assign_public_ip: yes
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          security_token: "{{ aws_session_token }}"
+          instance_tags:
+              Name: master
+       register: ec2
+     - name: launching ec2 instance for webserver
+       ec2:
+          instance_type: t2.medium
+          key_name: kube
+          image: ami-0742b4e673072066f
+          region: us-east-1
+          group: kube
+          count: 1
+          wait: yes
+          vpc_subnet_id: "{{ aws_subnet_id }}"
+          assign_public_ip: yes
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          security_token: "{{ aws_session_token }}"
+          instance_tags:
+              Name: node
+       register: ec2_out
+     - name: master
+       lineinfile:
+          path: "{{ aws_ip_path }}"
+          line: "{{ item.public_ip }}"
+       loop: "{{ ec2.instances }}"
+#     - debug:
+#          var: ec2.instances[0].public_ip
+     - name: node
+       lineinfile:
+          path: "{{ aws_ip_path }}"
+          line: "{{ item.public_ip }}"
+       loop: "{{ ec2_out.instances }}"
+
+[root@node2 kubernetes]# cat host.yml
+---
+ - hosts: localhost
+   gather_facts: no
+   become: yes
+   tasks:
+     - lineinfile:
+          path: /root/ansible/inventory
+          insertbefore: '^[node]'
+          line: "prasad master11"
+     - lineinfile:
+          path: /root/ansible/inventory
+          regexp: '^[node]'
+          line: "node111"
+[root@node2 kubernetes]# cat ibm.yaml
+---
+ - hosts:
+    - master
+    - node
+   remote_user: ec2-user
+   become: yes
+   tasks:
+      - name: runing shell commands
+        shell: "{{ item }}"
+        loop:
+          - sudo echo "redhat" | passwd --stdin root
+          - sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+          - service sshd reload
+          - useradd userX
+          - echo "password" | passwd --stdin userX
+          - sed -i '/^root*/a userX ALL=(ALL) ALL' /etc/sudoers
+[root@node2 kubernetes]# cat inventory
+[test]
+localhost
+
+[instances]
+54.162.195.194
+3.208.91.39
+
+
+[ww]
+44.194.235.42
+44.194.178.207
+54.158.64.205
+3.90.193.85
+3.231.64.114
+[root@node2 kubernetes]# cat key_upload.yml
+---
+ - hosts: test
+   become: true
+   vars_files:
+      - cred.yml
+   tasks:
+      - name: uploading key on aws
+        ec2_key:
+           name: kube
+           key_material: 'ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDC3ybH8KvgWqnMWWLFHkwLgskxd8GMzN2IGii3nzetTNvjg5eHnP8tuebkNfbgoyWV7Zd/NgnlFMVXLzQy3MXeW1llkEE/m6/5Xl/3irpSBmD8+cJg0NKyqpM+lns64X37CwrHrBDKrktOmwaGWBVjCzwOjk2QPr4KILp7FSBzJ/pp4/lwVPBXjc2ilGuObR3jefNl004ze8/KVSYMAwKmpbpXGetEHkm+p+2x/S01/xnm2v+Lu4YoY4kcqXC0XBenvZiSqa/RtYu9R2TwxMSQHXzJngsYRUKtj2UiLt4tF3J1kdAQzPd24V3RFDob+bNPHBKQyFDs6LdJiPqgNzgL'
+           state: present
+           aws_access_key: "{{ aws_access_key_id }}"
+           aws_secret_key: "{{ aws_secret_access_key }}"
+           security_token: "{{ aws_session_token }}"
+      - name: allocate a new elastic IP and associate it with an instance
+        ec2_eip:
+            state: present
+            region: us-east-1
+            in_vpc: yes
+            release_on_disassociation: yes
+            aws_access_key: "{{ aws_access_key_id }}"
+            aws_secret_key: "{{ aws_secret_access_key }}"
+            security_token: "{{ aws_session_token }}"
+        register: eip1
+      - name: allocate a new elastic IP and associate it with an instance
+        ec2_eip:
+            state: present
+            region: us-east-1
+            in_vpc: yes
+            release_on_disassociation: yes
+            aws_access_key: "{{ aws_access_key_id }}"
+            aws_secret_key: "{{ aws_secret_access_key }}"
+            security_token: "{{ aws_session_token }}"
+        register: eip2
+      - name: allocate a new elastic IP and associate it with an instance
+        ec2_eip:
+            state: present
+            region: us-east-1
+            in_vpc: yes
+            release_on_disassociation: yes
+            aws_access_key: "{{ aws_access_key_id }}"
+            aws_secret_key: "{{ aws_secret_access_key }}"
+            security_token: "{{ aws_session_token }}"
+        register: eip3
+      - name: allocate a new elastic IP and associate it with an instance
+        ec2_eip:
+            state: present
+            region: us-east-1
+            in_vpc: yes
+            release_on_disassociation: yes
+            aws_access_key: "{{ aws_access_key_id }}"
+            aws_secret_key: "{{ aws_secret_access_key }}"
+            security_token: "{{ aws_session_token }}"
+        register: eip4
+      - name: allocate a new elastic IP and associate it with an instance
+        ec2_eip:
+            state: present
+            region: us-east-1
+            in_vpc: yes
+            release_on_disassociation: yes
+            aws_access_key: "{{ aws_access_key_id }}"
+            aws_secret_key: "{{ aws_secret_access_key }}"
+            security_token: "{{ aws_session_token }}"
+        register: eip5
+      - debug:
+            msg: "{{ item }}"
+        loop:
+           - "{{ eip1.public_ip }}"
+           - "{{ eip2.public_ip }}"
+           - "{{ eip3.public_ip }}"
+           - "{{ eip4.public_ip }}"
+           - "{{ eip5.public_ip }}"
+[root@node2 kubernetes]# cat key.yml
+---
+ - hosts: localhost
+   vars_files:
+     - cred.yml
+   tasks:
+     - name: create key pair using key_material obtained using 'file' lookup plugin
+       ec2_key:
+         name: kube
+         key_material: "{{ lookup('file', '/root/ansible/kube.pem') }}"
+         aws_access_key: "{{ aws_access_key_id }}"
+         aws_secret_key: "{{ aws_secret_access_key }}"
+         security_token: "{{ aws_session_token }}"
+[root@node2 kubernetes]# cat kk.yml
+---
+ - hosts: instances
+   become: yes
+   remote_user: ec2-user
+   tasks:
+     - name: Mount lv
+       mount:
+            path: /home/data
+            src: /dev/myvg/vol1
+            state: mounted
+            fstype: xfs
+
+[root@node2 kubernetes]# cat kube.pem
+-----BEGIN RSA PRIVATE KEY-----
+MIIEpAIBAAKCAQEAwt8mx/Cr4FqpzFlixR5MC4LJMXfBjMzdiBoot583rUzb44OX
+h5z/Lbnm5DX24KMlle2XfzYJ5RTFVy80MtzF3ltZZZBBP5uv+V5f94q6UgZg/PnC
+YNDSsqqTPpZ7OuF9+wsKx6wQyq5LTpsGhlgVYws8Do5NkD6+CiC6exUgcyf6aeP5
+cFTwV43NopRrjm0d43nzZdNOM3vPylUmDAMCpqW6VxnrRB5Jvqftsf0tNf8Z5tr/
+i7uGKGOJHKlwtFwXp72Ykqmv0bWLvUdk8MTEkB18yZ4LGEVCrY9lIi7eLRdydZHQ
+EMz3duFd0RQ6G/mzTxwSkMhQ7Oi3SYj6oDc4CwIDAQABAoIBAGdZO9ML88ufqa/D
+tBtAjyoHqbY/gfmvaMnWvcNsgHW7bl7CGmoEvFy+3BIqAI1wWO2jvRXtTeAdXO95
+DGDxL0tW/RldIQ2f/vrsr060V05LLcLcntcDyMqSplaqLh6zGkI6v/PXcGxddXjx
+xMsZCfamLaq2k7ItZFIwu1WthbEsE2prEl5Pw+W2LTbJJSZuV4v04WRXm93ER6Mf
+9xSdQDuAdBDAgWRB71mVVn+wIvbwT8ZLSn+xrzQ09tDBpIirnOgwVZhlAp06x2wb
+DU/yheyXR0lxxqu10xf9DwYbsr0b2my04GBlvCQEz9QIsaEKykH+GpVbkieHsRuj
+vsZx7+kCgYEA+DKu1PuQsO9D3GvBRYWEyyHFfchAs4qIMlooeqpjZ3RNoK6/7nDa
+hTw0dES86jtTgf3YopXCQPmUjxR9dOu88clIiwyXkQaMtjHspwQYId6e0e+wtQ7t
+FZM85jAbK4Xg9l84X7zkQTFxokmaa4QkX8acyZSmHfF/DvixUcI1ba0CgYEAyP9W
+VwY3zWE3rTHbnKaTU5JwF0y1KyULDmBodd/ol2IYs6yp16se6fdfQXEmZ3lreN4q
+tmJxZMgD8tpKCiifG1pEqeD/9QPgsyQtFoIqCGTuAuoQdB0Bp+/2a68Nu6XUxWYK
+gMAqSi2YTWrSCjX1XvzvPDthHF6W2rjo2PRkg5cCgYEAqF9hoVSjfJRkGeTzsSD5
+y/+2BTVTRzlEWbw117k9RBJvEwFZbP0cEOSdxP5YliH27alyTCGCLSfi8wl4blf5
+zqC42LOLIrQpwvOtUkQBxwBKB6st2jYs+cTvvEyIMgdZbGl+SdxPkDZlmy2JV0TG
+lD6dYFa6Nnf8tQBa8lbofeUCgYEAootTQGcn43BWPTrPtdxD0lbfTQhcjnqTeVnf
+wEuF5j6PaWYdp+qbwmupXdvqSc24avOHqRztRKo3/0ImlBaLrOwQES2C8JrlMRn1
+WHmFEmrEzBiLm8sFVtFI/4Z+XZza95PwtHQy/u/mdd0H5PgD6YA03AnNG8smxdS5
+gRIK4xsCgYBZcMe3zmvZraAOgdKXV7X8OM+JiBU2ytWjgJOPfz3kNMe06tXi+UVZ
+ffR+7RSo/NeirRLrllCzoQnJzaS1s0+6jnbxTlSt3BTC1+IqzFCpBSnh0QIl9tK9
+JEmVgaGhuG5YqcaAKzVrbmQq33klyP0HMED9nc90N2ERJl5TG2j/lg==
+-----END RSA PRIVATE KEY-----
+[root@node2 kubernetes]# cat kube.yaml
+---
+ - hosts:
+    - master
+    - node
+   remote_user: ec2-user
+   become: yes
+   tasks:
+      - hostname:
+          name: master
+        when: inventory_hostname in groups['master']
+      - hostname:
+          name: node
+        when: inventory_hostname in groups['node']
+      - name: runing shell commands
+        shell: "{{ item }}"
+        loop:
+          - sudo echo "redhat" | passwd --stdin root
+          - sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+          - service sshd reload
+          - useradd userX
+          - echo "password" | passwd --stdin userX
+          - sed -i '/^root*/a userX ALL=(ALL) ALL' /etc/sudoers
+          - sudo swapoff -a
+      - name: Commenting Swap entries in /etc/fstab
+        replace:
+          path: /etc/fstab
+          regexp: '(.*swap*)'
+          replace: '#\1'
+      - name: Creating a repository file for Kubernetes
+        file:
+          path: /etc/yum.repos.d/kubernetes.repo
+          state: touch
+      - name: Adding repository details in Kubernetes repo file.
+        blockinfile:
+          path: /etc/yum.repos.d/kubernetes.repo
+          block: |
+             [kubernetes]
+             name=Kubernetes
+             baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+             enabled=1
+             gpgcheck=1
+             repo_gpgcheck=1
+             gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+      - name: Installing required packages
+        yum:
+          name: "{{ item }}"
+          state: present
+        loop:
+          - kubeadm
+          - docker
+      - name: Starting and Enabling the required services
+        service:
+          name: "{{ item }}"
+          state: started
+          enabled: yes
+        loop:
+          - docker
+          - kubelet
+#      - name: Initializing Kubernetes cluster
+#        shell: kubeadm init
+#        register: output
+#        when: inventory_hostname in groups['master']
+#      - name: Copying required files
+#        shell: |
+#          mkdir -p $HOME/.kube
+#          sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+#          sudo chown $(id -u):$(id -g) $HOME/.kube/config
+#          export kubever=$(kubectl version | base64 | tr -d '\n')
+#        when: inventory_hostname in groups['master']
+#      - name: Install Network Add-on
+#        command: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+#        when: inventory_hostname in groups['master']
+#      - name: Install Network Add-on
+#        command: kubeadm token create --print-join-command > ab.sh
+#        when: inventory_hostname in groups['master']
+[root@node2 kubernetes]# cat ll.yml
+---
+ - hosts: instances
+   become: yes
+   remote_user: ec2-user
+   tasks:
+     - yum:
+          name: policycoreutils-python-utils-2.8-16.1.el8.noarch
+          state: present
+     - name: Ensure the default Apache port is 18989
+       lineinfile:
+            path: /etc/httpd/conf/httpd.conf
+            insertafter: '^#Listen '
+            line: Listen 18989
+
+[root@node2 kubernetes]# cat lvextend.yml
+---
+ - hosts: all
+   ignore_errors: yes
+   become: yes
+   tasks:
+
+[root@node2 kubernetes]# cat main_key_onverter
+ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDC3ybH8KvgWqnMWWLFHkwLgskxd8GMzN2IGii3nzetTNvjg5eHnP8tuebkNfbgoyWV7Zd/NgnlFMVXLzQy3MXeW1llkEE/m6/5Xl/3irpSBmD8+cJg0NKyqpM+lns64X37CwrHrBDKrktOmwaGWBVjCzwOjk2QPr4KILp7FSBzJ/pp4/lwVPBXjc2ilGuObR3jefNl004ze8/KVSYMAwKmpbpXGetEHkm+p+2x/S01/xnm2v+Lu4YoY4kcqXC0XBenvZiSqa/RtYu9R2TwxMSQHXzJngsYRUKtj2UiLt4tF3J1kdAQzPd24V3RFDob+bNPHBKQyFDs6LdJiPqgNzgL
+[root@node2 kubernetes]# cat oo.yml
+ - hosts: localhost
+   become: true
+   vars_files:
+     - cred.yml
+   tasks:
+     - name: launching ec2 instance for webserver
+       ec2:
+          instance_type: t2.micro
+          key_name: kube
+          image: ami-0b0af3577fe5e3532
+          region: us-east-1
+          group: kube
+          count: 2
+          wait: yes
+          vpc_subnet_id: "{{ aws_subnet_id }}"
+          assign_public_ip: yes
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          security_token: "{{ aws_session_token }}"
+          instance_tags:
+              Name: Machine1
+       register: ec2
+     - ec2_vol:
+          instance: "{{ item.id }}"
+          volume_size: 8
+:          region: us-east-1
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          security_token: "{{ aws_session_token }}"
+          delete_on_termination: yes
+          device_name: /dev/sdb
+       loop: "{{ ips }}"
+     - ec2_vol:
+          instance: "{{ item.id }}"
+          volume_size: 2
+          region: us-east-1
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          security_token: "{{ aws_session_token }}"
+          delete_on_termination: yes
+          device_name: /dev/sdc
+       loop: "{{ ec2.instances }}"
+     - ec2_vol:
+          instance: "{{ item.id }}"
+          volume_size: 2
+          region: us-east-1
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          security_token: "{{ aws_session_token }}"
+          delete_on_termination: yes
+          device_name: /dev/sdd
+       loop: "{{ ec2.instances }}"
+[root@node2 kubernetes]# cat part1.yaml
+---
+ - hosts: instances
+   become: yes
+   remote_user: ec2-user
+   tasks:
+     - name: adding user
+       user:
+         name: student
+         shell: /bin/bash
+         password: redhat
+         state: present
+     - name: installing packages
+       yum:
+         name:
+            - firewalld
+            - httpd
+            - chrony
+            - words
+            - policycoreutils-python-utils-2.8-16.1.el8.noarch
+         state: present
+     - name: Start services
+       service:
+         name: "{{ item }}"
+         state: started
+         enabled: yes
+       loop:
+         - firewalld
+         - httpd
+         - chronyd.service
+     - name: creating file index.html
+       file:
+          name: /var/www/html/index.html
+          state: touch
+     - name: Adding content to index.html
+       copy:
+          content: "Welcome To RHEL!!"
+          dest: /var/www/html/index.html
+     - name: adding service to firewall
+       firewalld:
+         service: http
+         permanent: yes
+         state: enabled
+     - name: Reload service firewalld, in all cases
+       service:
+         name: firewalld
+         state: reloaded
+     - name: Start service httpd, if not started
+       service:
+         name: httpd
+         state: restarted
+         enabled: yes
+     - name: running commands
+       command: "{{ item }}"
+       loop:
+         - echo "redhat" | passwd --stdin root
+         - sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+         - service sshd reload
+     - name: Ensure the default Apache port is 18989
+       lineinfile:
+            path: /etc/httpd/conf/httpd.conf
+            insertafter: '^#Listen '
+            line: Listen 18989
+[root@node2 kubernetes]# cat reg.yaml
+---
+ - hosts: test
+   become: yes
+   tasks:
+          - name: Show ec2 instance json data
+            debug:
+                  msg: "{{ ec2 }}"
+[root@node2 kubernetes]# cat removed_content.txt
+#     - name: Show ec2 instance json data
+#       debug:
+#          msg:
+#            - "{{ ec2.instances[0].id }}"
+#            - "{{ ec2.instances[1].id }}"
+#            - "{{ ec2.instances[2].id }}"
+===========================================================
+
+-      name: allocate a new elastic IP and associate it with an instance
+       ec2_eip:
+            device_id: "{{ item }}"
+            region: us-east-1
+            in_vpc: yes
+            release_on_disassociation: yes
+            aws_access_key: "{{ aws_access_key_id }}"
+            aws_secret_key: "{{ aws_secret_access_key }}"
+            security_token: "{{ aws_session_token }}"
+       loop:
+            - "{{ ec2.instances[0].id }}"
+            - "{{ ec2.instances[1].id }}"
+            - "{{ ec2.instances[2].id }}"
+            - "{{ ec2.instances[3].id }}"
+            - "{{ ec2.instances[4].id }}"
+       register: eip
+     - name: output the IP
+       debug:
+            msg: "{{ eip }}"
+     - name: creating NIC
+       ec2_eni:
+          instance_id: "{{ item.id }}"
+          private_ip_address: "{{ item.ip }}"
+          subnet_id: "{{ aws_subnet_id }}"
+          region: us-east-1
+          device_index: 1
+          state: present
+          attached: yes
+          delete_on_termination: true
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          security_token: "{{ aws_session_token }}"
+       loop:
+          - id: "{{ ec2.instances[0].id }}"
+            ip: 172.31.16.101
+          - id: "{{ ec2.instances[1].id }}"
+            ip: 172.31.16.102
+          - id: "{{ ec2.instances[2].id }}"
+            ip: 172.31.16.103
+          - id: "{{ ec2.instances[3].id }}"
+            ip: 172.31.16.104
+          - id: "{{ ec2.instances[4].id }}"
+            ip: 172.31.16.105
+
+[root@node2 kubernetes]# cat rhcsa_part1.yaml
+---
+ - hosts: test
+   become: yes
+   tasks:
+      - name: creating nic and atching to ec2
+[root@node2 kubernetes]#
+[root@node2 kubernetes]# cat sdb.yml
+---
+ - hosts: instances
+   become: yes
+   remote_user: ec2-user
+   tasks:
+     - name: Install lvm2 dependency
+       yum:
+            name: lvm2
+            state: present
+     - name: Create a new primary partition with a size of 1GiB
+       parted:
+            device: /dev/xvdb
+            number: 1
+            state: present
+            part_end: 1GB
+            state: present
+     - name: Create a volume group on top of /dev/sda1 with physical extent size = 32MB
+       lvg:
+            vg: myvg
+            pvs: /dev/xvdb1
+            state: present
+     - name: task for creating logical volume
+       lvol:
+            vg: myvg
+            lv:  vol1
+            size: 110m
+            state: present
+     - filesystem:
+            fstype: xfs
+            dev: /dev/myvg/vol1
+     - name: creating mounting point
+       file:
+            path: /home/data
+            state: directory
+     - name: Mount lv
+       mount:
+            path: /home/data
+            src: /dev/myvg/vol1
+            state: mounted
+            fstype: xfs
+[root@node2 kubernetes]# cat setup.yml
+---
+ - hosts: instances
+   become: yes
+   remote_user: ec2-user
+   tasks:
+     - name: adding user
+       user:
+         name: "{{ item }}"
+         shell: /bin/bash
+         password: redhat
+         state: present
+       loop:
+         - student
+         - natasha
+     - name: instlling packages
+       yum:
+          name:
+             - podman
+             - vdo
+          state: present
+     - name: service start
+       service:
+          name: "{{ item }}"
+          state: started
+          enabled: yes
+       loop:
+           - podman
+           - vdo
+     - name: running commands
+       shell: "{{ item }}"
+       loop:
+         - echo "redhat" | passwd --stdin root
+         - sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+         - service sshd reload
+         - tuned-adm profile balanced
+     - name: Install lvm2 dependency
+       yum:
+            name: lvm2
+            state: present
+     - name: Create a new primary partition with a size of 1GiB
+       parted:
+            device: /dev/xvdb
+            number: 1
+            state: present
+            part_end: 1GB
+            state: present
+     - name: Create a volume group on top of /dev/sda1 with physical extent size = 32MB
+       lvg:
+            vg: myvg
+            pvs: /dev/xvdb1
+            state: present
+     - name: task for creating logical volume
+       lvol:
+            vg: myvg
+            lv:  vol1
+            size: 110m
+            state: present
+     - filesystem:
+            fstype: xfs
+            dev: /dev/myvg/vol1
+     - name: creating mounting point
+       file:
+            path: /home/data
+            state: directory
+     - name: Mount lv
+       mount:
+            path: /home/data
+            src: /dev/myvg/vol1
+            state: mounted
+            fstype: xfs
+[root@node2 kubernetes]# cat test.yaml
+ - name: Initializing Kubernetes cluster
+        shell: kubeadm init
+        register: output
+        when: inventory_hostname in groups['master']
+     - name: Storing Logs and Generated token for future purpose.
+        local_action: copy content={{ output.stdout }} dest=join_token
+        when: inventory_hostname in groups['master']
+      - name: Copying required files
+        shell: |
+          mkdir -p $HOME/.kube
+          sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+          sudo chown $(id -u):$(id -g) $HOME/.kube/config
+          export kubever=$(kubectl version | base64 | tr -d '\n')
+        when: inventory_hostname in groups['master']
+      - name: Install Network Add-on
+        command: kubectl apply -f "https://cloud.weave.works/k8s/net?k8s-version=$kubever"
+        when: inventory_hostname in groups['master']
+      - name: Copying token to worker nodes
+        copy: src=join_token dest=join_token
+        when: inventory_hostname in groups['node']
+      - name: Joining worker nodes with kubernetes master
+        shell: "`grep -i 'kubeadm join' join_token`"
+        when: inventory_hostname in groups['node']
+[root@node2 kubernetes]# cat try.yaml
+ - hosts: localhost
+   become: true
+   vars_files:
+     - cred.yml
+   tasks:
+     - name: creating security group
+       ec2_group:
+           name: kube
+           description: Security grp for web server
+           region: us-east-1
+           aws_access_key: "{{ aws_access_key_id }}"
+           aws_secret_key: "{{ aws_secret_access_key }}"
+           security_token: "{{ aws_session_token }}"
+           rules:
+              - proto: tcp
+                from_port: 22
+                to_port: 22
+                cidr_ip: 0.0.0.0/0
+              - proto: tcp
+                from_port: 0
+                to_port: 65535
+                cidr_ip: 0.0.0.0/0
+              - proto: udp
+                from_port: 0
+                to_port: 65535
+                cidr_ip: 0.0.0.0/0
+           rules_egress:
+              - proto: all
+                cidr_ip: 0.0.0.0/0
+     - name: launching ec2 instance for webserver
+       ec2:
+          instance_type: t2.micro
+          key_name: kube
+          image: ami-0b0af3577fe5e3532
+          region: us-east-1
+          group: kube
+          count: 5
+          wait: yes
+          vpc_subnet_id: "{{ aws_subnet_id }}"
+          assign_public_ip: yes
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          security_token: "{{ aws_session_token }}"
+          instance_tags:
+              Name: Machine1
+       register: ec2
+     - name: associate an elastic IP with an instance
+       ec2_eip:
+          device_id: "{{ item.id }}"
+          ip: "{{ item.ip }}"
+          region: us-east-1
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          security_token: "{{ aws_session_token }}"
+       loop: "{{ ips }}"
+[root@node2 kubernetes]# cat uu.yml
+ - hosts: localhost
+   become: true
+   vars_files:
+     - cred.yml
+   tasks:
+     - name: launching ec2 instance for webserver
+       ec2:
+          instance_type: t2.micro
+          key_name: kube
+          image: ami-0b0af3577fe5e3532
+          region: us-east-1
+          group: kube
+          count: 2
+          wait: yes
+          vpc_subnet_id: "{{ aws_subnet_id }}"
+          assign_public_ip: yes
+          volumes:
+           - device_name: /dev/sdb
+             volume_size: 8
+             delete_on_termination: true
+           - device_name: /dev/sdc
+             volume_size: 2
+             delete_on_termination: true
+           - device_name: /dev/sdd
+             volume_size: 2
+             delete_on_termination: true
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          security_token: "{{ aws_session_token }}"
+          instance_tags:
+              Name: Machine1
+       register: ec2
+
+[root@node2 kubernetes]# cat volume.yml
+ - hosts: localhost
+   become: true
+   vars_files:
+     - cred.yml
+   tasks:
+     - name: launching ec2 instance for webserver
+       ec2:
+          instance_type: t2.micro
+          key_name: kube
+          image: ami-0b0af3577fe5e3532
+          region: us-east-1
+          group: kube
+          count: 2
+          wait: yes
+          vpc_subnet_id: "{{ aws_subnet_id }}"
+          assign_public_ip: yes
+          volumes:
+           - device_name: /dev/sdb
+             volume_size: 8
+             delete_on_termination: true
+           - device_name: /dev/sdc
+             volume_size: 2
+             delete_on_termination: true
+           - device_name: /dev/sdd
+             volume_size: 2
+             delete_on_termination: true
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          security_token: "{{ aws_session_token }}"
+          instance_tags:
+              Name: Machine1
+       register: ec2
+     - name: associate an elastic IP with an instance
+       ec2_eip:
+          device_id: "{{ item.id }}"
+          ip: "{{ item.ip }}"
+          region: us-east-1
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          security_token: "{{ aws_session_token }}"
+       loop: "{{ ips }}"
+[root@node2 kubernetes]#
