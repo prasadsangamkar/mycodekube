@@ -1,0 +1,160 @@
+[root@ip-172-31-90-216 ~]# cd ansible/
+[root@ip-172-31-90-216 ansible]# cat inst.yml
+---
+ - hosts: aws
+   become: true
+   vars_files:
+     - cred.yml
+   tasks:
+     - name: launching ec2 instance for webserver
+       ec2:
+          instance_type: t2.medium
+          key_name: kube
+          image: ami-061ac2e015473fbe2
+          region: us-east-1
+          group: kube
+          count: 1
+          wait: yes
+          vpc_subnet_id: "{{ aws_subnet_id }}"
+          assign_public_ip: yes
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          instance_tags:
+              Name: master
+       register: myec2
+     - name: launching ec2 instance for webserver
+       ec2:
+          instance_type: t2.micro
+          key_name: kube
+          image: ami-061ac2e015473fbe2
+          region: us-east-1
+          group: kube
+          count: 2
+          wait: yes
+          vpc_subnet_id: "{{ aws_subnet_id }}"
+          assign_public_ip: yes
+          aws_access_key: "{{ aws_access_key_id }}"
+          aws_secret_key: "{{ aws_secret_access_key }}"
+          instance_tags:
+              Name: node
+       register: ec2
+     - name: add to ansible hosts file
+       lineinfile:
+         dest: /root/ansible/inventory
+         insertbefore: '[node]'
+         line: "{{ myec2.instances[0].public_ip }}"
+     - name: add to ansible hosts file
+       lineinfile:
+         dest: /root/ansible/inventory
+         insertafter: '[node]'
+         line: "{{ ec2.instances[0].public_ip }}"
+     - name: add to ansible hosts file
+       lineinfile:
+         dest: /root/ansible/inventory
+         insertafter: '[node]'
+         line: "{{ ec2.instances[1].public_ip }}"
+
+
+
+
+
+
+
+
+
+[root@ip-172-31-90-216 ansible]# cat kube.yml
+---
+ - hosts:
+    - master
+    - node
+   remote_user: ec2-user
+   ignore_errors: true
+   become: yes
+   tasks:
+      - hostname:
+          name: master
+        when: inventory_hostname in groups['master']
+      - hostname:
+          name: node
+        when: inventory_hostname in groups['node']
+      - name: runing shell commands
+        shell: "{{ item }}"
+        loop:
+          - sudo echo "redhat" | passwd --stdin root
+          - sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+          - service sshd reload
+          - sudo swapoff -a
+      - name: Commenting Swap entries in /etc/fstab
+        replace:
+          path: /etc/fstab
+          regexp: '(.*swap*)'
+          replace: '#\1'
+      - name: Creating a repository file for Kubernetes
+        file:
+          path: /etc/yum.repos.d/kubernetes.repo
+          state: touch
+      - name: Adding repository details in Kubernetes repo file.
+        blockinfile:
+          path: /etc/yum.repos.d/kubernetes.repo
+          block: |
+               [kubernetes]
+               name=Kubernetes
+               baseurl=https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+               enabled=1
+               gpgcheck=1
+               repo_gpgcheck=1
+               gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+      - name: Installing required packages
+        yum:
+          name: "{{ item }}"
+          state: present
+        loop:
+          - kubeadm
+          - docker
+          - kubelet
+          - kubectl
+      - name: "Configuring the Ip tables and refreshing sysctl"
+        copy:
+           dest: /etc/sysctl.d/k8s.conf
+           content: |
+             net.bridge.bridge-nf-call-ip6tables = 1
+             net.bridge.bridge-nf-call-iptables = 1
+      - name: Ansible create file with content example
+        copy:
+          dest: "/etc/docker/daemon.json"
+          content: |
+               {
+                "exec-opts": ["native.cgroupdriver=systemd"]
+                }
+      - name: Starting and Enabling the required services
+        service:
+          name: kubelet
+          enabled: yes
+          state: started
+      - name: Starting and Enabling the required services
+        service:
+          name: docker
+          enabled: yes
+          state: started
+      - name: Initializing Kubernetes cluster
+        shell: sudo kubeadm init
+        register: output
+        when: inventory_hostname in groups['master']
+      - name: Copying required files
+        shell: |
+          mkdir -p $HOME/.kube
+          sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+          sudo chown $(id -u):$(id -g) $HOME/.kube/config
+          export kubever=$(kubectl version | base64 | tr -d '\n')
+        when: inventory_hostname in groups['master']
+      - name: adding node
+        shell: kubeadm token create  --print-join-command
+        when: inventory_hostname in groups['master']
+        register: mytoken
+      - name: joining to Master
+        command: "{{ hostvars[groups['master'][0]]['mytoken']['stdout'] }}"
+        when: inventory_hostname in groups['node']
+      - name: Install Network Add-on
+        command: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+        when: inventory_hostname in groups['master']
+[root@ip-172-31-90-216 ansible]#
